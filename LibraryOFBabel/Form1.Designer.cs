@@ -37,6 +37,8 @@
             modeControlToolStripMenuItem = new ToolStripMenuItem();
             statsAndInfoToolStripMenuItem = new ToolStripMenuItem();
             helpToolStripMenuItem = new ToolStripMenuItem();
+            panelZoom = new Panel();
+            panelVisualizer.SuspendLayout();
             panel2.SuspendLayout();
             menuStrip1.SuspendLayout();
             SuspendLayout();
@@ -44,6 +46,7 @@
             // panelVisualizer
             // 
             panelVisualizer.BorderStyle = BorderStyle.FixedSingle;
+            panelVisualizer.Controls.Add(panelZoom);
             panelVisualizer.Location = new Point(386, 27);
             panelVisualizer.Name = "panelVisualizer";
             panelVisualizer.Size = new Size(1118, 786);
@@ -96,13 +99,13 @@
             // modeControlToolStripMenuItem
             // 
             modeControlToolStripMenuItem.Name = "modeControlToolStripMenuItem";
-            modeControlToolStripMenuItem.Size = new Size(180, 22);
+            modeControlToolStripMenuItem.Size = new Size(148, 22);
             modeControlToolStripMenuItem.Text = "Mode Control";
             // 
             // statsAndInfoToolStripMenuItem
             // 
             statsAndInfoToolStripMenuItem.Name = "statsAndInfoToolStripMenuItem";
-            statsAndInfoToolStripMenuItem.Size = new Size(180, 22);
+            statsAndInfoToolStripMenuItem.Size = new Size(148, 22);
             statsAndInfoToolStripMenuItem.Text = "Stats and Info";
             // 
             // helpToolStripMenuItem
@@ -110,6 +113,13 @@
             helpToolStripMenuItem.Name = "helpToolStripMenuItem";
             helpToolStripMenuItem.Size = new Size(44, 20);
             helpToolStripMenuItem.Text = "Help";
+            // 
+            // panelZoom
+            // 
+            panelZoom.Location = new Point(889, -1);
+            panelZoom.Name = "panelZoom";
+            panelZoom.Size = new Size(228, 201);
+            panelZoom.TabIndex = 0;
             // 
             // Form1
             // 
@@ -122,6 +132,7 @@
             MainMenuStrip = menuStrip1;
             Name = "Form1";
             Text = "Form1";
+            panelVisualizer.ResumeLayout(false);
             panel2.ResumeLayout(false);
             panel2.PerformLayout();
             menuStrip1.ResumeLayout(false);
@@ -141,5 +152,6 @@
         private ToolStripMenuItem modeControlToolStripMenuItem;
         private ToolStripMenuItem statsAndInfoToolStripMenuItem;
         private ToolStripMenuItem helpToolStripMenuItem;
+        private Panel panelZoom;
     }
 }
