@@ -6,190 +6,318 @@ using LibraryOFBabel.Simulation;
 
 namespace LibraryOFBabel.Visualization
 {
+    public class LayerSnapshot
+    {
+        public float LayerScale { get; set; }
+        public float RingRadius { get; set; }           // world units
+        public float NodeRadiusScaled { get; set; }     // world units (node radius in world space)
+        public float LayerRotation { get; set; }
+        public float WallRadius { get; set; }           // world units (center radius for wall)
+        public float WalkwayRadius { get; set; }        // world units (center radius for walkway)
+        public float BaseNodeRadius { get; set; }       // world units
+        public PointF[] NodeWorldPositions { get; set; } = Array.Empty<PointF>(); // world coords
+    }
+
     /// <summary>
-    /// Handles drawing the zoomed-in view of the librarian in a separate panel.
-    /// Provides configurable properties for zoom factor, radius, and spacing.
+    /// Camera-style zoom viewport. All geometry is computed/kept in world coordinates first and only
+    /// transformed to zoom coordinates at draw time using:
+    ///   zx = zoomCx + (worldX - libWorldX) * ZoomFactor
+    ///   zy = zoomCy + (worldY - libWorldY) * ZoomFactor
+    /// IMPORTANT: radii/thickness values are world units and are multiplied exactly once by ZoomFactor.
     /// </summary>
     public class DrawZoomPanel
     {
-        // Configurable properties
-        public float ZoomFactor { get; set; } = 3.0f; // Magnification level
-        public float ZoomRadius { get; set; } = 100f; // Radius in world space to draw nodes
-        public float SpacingFactor { get; set; } = 2.5f; // Factor to space out nodes to prevent overlap
-        public float BaseNodeRadius { get; set; } = 10f; // Base radius for nodes in zoom
-        public float BaseCoreRadius { get; set; } = 10f; // Base radius for core in zoom
-        public float LibrarianSizeMultiplier { get; set; } = 0.5f; // Multiplier for librarian size
+        public float ZoomFactor { get; set; } = 2.0f;
+        public float ZoomRadius { get; set; } = 100f;
+        public float SpacingFactor { get; set; } = 1.0f; // preserved but NOT applied to camera transform
+        public float LibrarianSizeMultiplier { get; set; } = 0.4f;
 
-        // Cached values from renderer
+        // Cached renderer globals (world-space)
         private float currentCx, currentCy, currentMaxRadius, currentBaseNodeRadius, currentLayerSpacing, currentLastNodeRadius;
         private int currentLayers;
         private double currentRotationAngle;
         private float librarianAngleOffset;
+        private float currentMinScale;
+        private float currentLibrarianOffsetNodeFactor;
+        private float currentWallWidthAdjustment, currentWallOffsetAdjustment;
+        private float currentWalkwayWidthAdjustment, currentWalkwayOffsetAdjustment;
 
-        /// <summary>
-        /// Updates cached values from the renderer.
-        /// </summary>
-        public void UpdateCache(float cx, float cy, float maxRadius, int layers, float layerSpacing, float baseNodeRadius, float lastNodeRadius, double rotationAngle, float angleOffset)
+        // Optional exact snapshots provided by the SKIA renderer
+        private IReadOnlyList<LayerSnapshot>? layerSnapshots;
+
+        public void UpdateCache(
+            float cx,
+            float cy,
+            float maxRadius,
+            int layers,
+            float layerSpacing,
+            float baseNodeRadius,
+            float lastNodeRadius,
+            double rotationAngle,
+            float angleOffset,
+            float minScale,
+            float librarianOffsetNodeFactor,
+            float wallWidthAdjustment,
+            float wallOffsetAdjustment,
+            float walkwayWidthAdjustment,
+            float walkwayOffsetAdjustment,
+            IReadOnlyList<LayerSnapshot>? snapshots = null)
         {
             currentCx = cx;
             currentCy = cy;
             currentMaxRadius = maxRadius;
-            currentLayers = layers;
+            currentLayers = Math.Max(1, layers);
             currentLayerSpacing = layerSpacing;
             currentBaseNodeRadius = baseNodeRadius;
             currentLastNodeRadius = lastNodeRadius;
             currentRotationAngle = rotationAngle;
             librarianAngleOffset = angleOffset;
+            currentMinScale = minScale;
+            currentLibrarianOffsetNodeFactor = librarianOffsetNodeFactor;
+            currentWallWidthAdjustment = wallWidthAdjustment;
+            currentWallOffsetAdjustment = wallOffsetAdjustment;
+            currentWalkwayWidthAdjustment = walkwayWidthAdjustment;
+            currentWalkwayOffsetAdjustment = walkwayOffsetAdjustment;
+            layerSnapshots = snapshots;
         }
 
-        /// <summary>
-        /// Draws the zoomed-in view on the specified Graphics.
-        /// </summary>
         public void Draw(Graphics g, int panelWidth, int panelHeight, SimulationEngine? engine, float perspectivePower, int nodeCount, float hexOrientationOffset)
         {
             var simState = engine?.CurrentState;
             if (simState == null) return;
 
-            // Scale properties based on nodeCount for consistency (base is 200)
-            float scaleFactor = nodeCount / 200f;
-            float scaledZoomRadius = ZoomRadius / scaleFactor;
-            float scaledSpacingFactor = SpacingFactor * scaleFactor;
-
-            // Calculate librarian position
+            // Compute librarian and head world positions using exact renderer formulas
             int headPos = simState.HeadPosition;
             int disk = Math.Max(1, simState.DiskSize);
             double headAngle = (headPos / (double)disk) * (Math.PI * 2.0);
-            double finalAngle = headAngle + librarianAngleOffset;
-            float outerRadius = currentLayerSpacing * currentLayers;
-            float libOutwardOffset = currentLastNodeRadius * 2.0f; // LibrarianOffsetNodeFactor
-            float libRadiusFromCenter = outerRadius + libOutwardOffset;
-            float hx = currentCx + libRadiusFromCenter * MathF.Cos((float)finalAngle);
-            float hy = currentCy + libRadiusFromCenter * MathF.Sin((float)finalAngle);
+            double libAngle = headAngle + librarianAngleOffset;
 
-            // Zoom center
+            float outerRadius = currentLayerSpacing * currentLayers;
+            float libOutwardOffset = currentLastNodeRadius * currentLibrarianOffsetNodeFactor;
+            float libRadiusFromCenter = outerRadius - libOutwardOffset;
+
+            float libWorldX = currentCx + libRadiusFromCenter * MathF.Cos((float)libAngle);
+            float libWorldY = currentCy + libRadiusFromCenter * MathF.Sin((float)libAngle);
+
+            float headRadiusFromCenter = outerRadius - currentLastNodeRadius * currentLibrarianOffsetNodeFactor;
+            float headWorldX = currentCx + headRadiusFromCenter * MathF.Cos((float)headAngle);
+            float headWorldY = currentCy + headRadiusFromCenter * MathF.Sin((float)headAngle);
+
             float zoomCx = panelWidth / 2f;
             float zoomCy = panelHeight / 2f;
 
-            // Clear background
+            var oldSmoothing = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Black);
 
-            // Draw center core
-            // float zCoreRadius = BaseCoreRadius * ZoomFactor;
-            // using (Brush coreBrush = new SolidBrush(Color.Yellow))
-            // {
-            //     g.FillEllipse(coreBrush, zoomCx - zCoreRadius, zoomCy - zCoreRadius, 2 * zCoreRadius, 2 * zCoreRadius);
-            // }
-
-            // Prepare request set
             var pendingSet = new HashSet<int>(simState.PendingRequests);
-            int diskSize = simState.DiskSize;
+            int nodesPerLayer = Math.Max(1, nodeCount);
 
-            // Draw guide rings
-            for (int layerIndex = 0; layerIndex < currentLayers; layerIndex++)
+            // Helper: world -> zoom transform
+            static (float zx, float zy) WorldToZoom(float worldX, float worldY, float libWorldX, float libWorldY, float zoomCx, float zoomCy, float zoomFactor)
             {
-                float t = layerIndex / (float)(currentLayers - 1);
-                float scale = 0.1f + 0.9f * MathF.Pow(t, perspectivePower);
-                float ringRadius = currentMaxRadius * scale;
-                float zRingRadius = ringRadius * ZoomFactor;
-                byte ringAlpha = (byte)(30 * (layerIndex + 1) / currentLayers);
-                using (Pen ringPen = new Pen(Color.FromArgb(ringAlpha, Color.White)))
-                {
-                    g.DrawEllipse(ringPen, zoomCx - zRingRadius, zoomCy - zRingRadius, 2 * zRingRadius, 2 * zRingRadius);
-                }
+                return (zoomCx + (worldX - libWorldX) * zoomFactor, zoomCy + (worldY - libWorldY) * zoomFactor);
             }
 
-            // Draw nodes within zoom radius
-            for (int layerIndex = 0; layerIndex < currentLayers; layerIndex++)
+            // If snapshots available, draw from them (preferred - pixel perfect)
+            if (layerSnapshots != null)
             {
-                float t = layerIndex / (float)(currentLayers - 1);
-                float scale = 0.1f + 0.9f * MathF.Pow(t, perspectivePower);
-                float ringRadius = currentMaxRadius * scale;
-                int nodesThisLayer = nodeCount;
+                for (int li = 0; li < layerSnapshots.Count; li++)
+                {
+                    var snap = layerSnapshots[li];
+
+                    // Guide ring: center is disk center transformed to zoom coords
+                    var (centerZx, centerZy) = WorldToZoom(currentCx, currentCy, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                    float zRingRadius = snap.RingRadius * ZoomFactor;
+                    byte ringAlpha = (byte)Math.Clamp(30 * (li + 1) / layerSnapshots.Count, 0, 255);
+                    using (var ringPen = new Pen(Color.FromArgb(ringAlpha, Color.White), Math.Max(0.5f, snap.LayerScale) * ZoomFactor))
+                        g.DrawEllipse(ringPen, centerZx - zRingRadius, centerZy - zRingRadius, 2 * zRingRadius, 2 * zRingRadius);
+
+                    // Walls: node world positions are stored. wallThickness is world units -> multiply once by ZoomFactor.
+                    float wallThicknessWorld = Math.Max(0.5f, currentWallWidthAdjustment * snap.NodeRadiusScaled);
+                    using (var wallPen = new Pen(Color.Goldenrod, wallThicknessWorld * ZoomFactor) { EndCap = LineCap.Round })
+                    {
+                        var nodes = snap.NodeWorldPositions;
+                        for (int i = 0; i < nodes.Length; i++)
+                        {
+                            var p1 = nodes[i];
+                            var p2 = nodes[(i + 1) % nodes.Length];
+                            var (zx1, zy1) = WorldToZoom(p1.X, p1.Y, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                            var (zx2, zy2) = WorldToZoom(p2.X, p2.Y, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                            g.DrawLine(wallPen, zx1, zy1, zx2, zy2);
+                        }
+                    }
+
+                    // Nodes: use stored world radius and positions; multiply radius exactly once by ZoomFactor.
+                    for (int i = 0; i < snap.NodeWorldPositions.Length; i++)
+                    {
+                        var wp = snap.NodeWorldPositions[i];
+                        float dx = wp.X - libWorldX;
+                        float dy = wp.Y - libWorldY;
+                        float dist = MathF.Sqrt(dx * dx + dy * dy);
+                        if (dist > ZoomRadius) continue;
+
+                        var (zx, zy) = WorldToZoom(wp.X, wp.Y, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                        float zRadius = snap.NodeRadiusScaled * ZoomFactor; // only *ZoomFactor, no extra scaling
+
+                        int cylinder = disk > 1 ? (int)Math.Round((double)i / snap.NodeWorldPositions.Length * (disk - 1)) : 0;
+                        Color fill = pendingSet.Contains(cylinder) ? Color.Yellow : Color.DarkGoldenrod;
+
+                        PointF[] poly = CreateRegularPolygonPoints(6, zRadius, zx, zy, hexOrientationOffset);
+                        using (var path = new GraphicsPath())
+                        {
+                            path.AddPolygon(poly);
+                            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
+                            using (var p = new Pen(Color.LightGoldenrodYellow, Math.Max(1f, 2f * (li + 1f) / Math.Max(1, layerSnapshots.Count)) * ZoomFactor))
+                                g.DrawPath(p, path);
+                        }
+                    }
+
+                    // Walkway: computed in world units in snapshot; compute outer/inner radii in world units and multiply once by ZoomFactor.
+                    if (snap.WalkwayRadius > 0)
+                    {
+                        float walkwayThicknessWorld = currentWalkwayWidthAdjustment * snap.NodeRadiusScaled;
+                        float outerRWorld = snap.WalkwayRadius + walkwayThicknessWorld / 2f;
+                        float innerRWorld = Math.Max(0f, snap.WalkwayRadius - walkwayThicknessWorld / 2f);
+                        float outerR = outerRWorld * ZoomFactor;
+                        float innerR = innerRWorld * ZoomFactor;
+
+                        using (var p = new GraphicsPath())
+                        {
+                            p.AddEllipse(centerZx - outerR, centerZy - outerR, 2 * outerR, 2 * outerR);
+                            p.AddEllipse(centerZx - innerR, centerZy - innerR, 2 * innerR, 2 * innerR);
+                            using (var b = new SolidBrush(Color.FromArgb(200, Color.DarkGoldenrod))) g.FillPath(b, p);
+                        }
+                    }
+                }
+
+                // Draw librarian at zoom center (camera centers librarian)
+                float libZradius = currentLastNodeRadius * ZoomFactor * LibrarianSizeMultiplier; // world radius * ZoomFactor
+                using (var libBrush = new SolidBrush(Color.Blue)) g.FillEllipse(libBrush, zoomCx - libZradius, zoomCy - libZradius, 2 * libZradius, 2 * libZradius);
+
+                // Draw head using world->zoom transform
+                var (zxHead, zyHead) = WorldToZoom(headWorldX, headWorldY, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                float headZradius = Math.Max(3f, currentLastNodeRadius * 0.5f) * ZoomFactor * LibrarianSizeMultiplier;
+                using (var hBrush = new SolidBrush(Color.Cyan)) g.FillEllipse(hBrush, zxHead - headZradius, zyHead - headZradius, 2 * headZradius, 2 * headZradius);
+
+                g.SmoothingMode = oldSmoothing;
+                return;
+            }
+
+            // Fallback: compute world geometry using exact renderer formulas (including perspective) then transform at draw time
+            var computed = new List<LayerSnapshot>(Math.Max(1, currentLayers));
+            for (int layerIndex = 0; layerIndex < Math.Max(1, currentLayers); layerIndex++)
+            {
+                float t = (currentLayers > 1) ? layerIndex / (float)(currentLayers - 1) : 1f;
+                float layerScale = currentMinScale + (1 - currentMinScale) * MathF.Pow(t, perspectivePower);
+                float ringRadius = currentMaxRadius * layerScale;
+                float nodeRadiusScaled = MathF.Min(currentBaseNodeRadius * layerScale, (2f * MathF.PI * ringRadius / nodesPerLayer) * 0.45f);
+
                 float rotationMultiplier = (currentLayers - layerIndex - 1) * 0.1f * (layerIndex % 2 == 0 ? 1f : -1f);
                 float layerRotation = (float)(currentRotationAngle * rotationMultiplier);
 
-                float angleStep = (2f * MathF.PI) / nodesThisLayer;
-                for (int i = 0; i < nodesThisLayer; i++)
+                // node world positions
+                var nodeWorldPositions = new PointF[nodesPerLayer];
+                float angleStep = (2f * MathF.PI) / nodesPerLayer;
+                for (int ni = 0; ni < nodesPerLayer; ni++)
                 {
-                    float angle = (i * angleStep) + layerRotation;
-                    float x = currentCx + ringRadius * MathF.Cos(angle);
-                    float y = currentCy + ringRadius * MathF.Sin(angle);
+                    float a = (ni * angleStep) + layerRotation;
+                    nodeWorldPositions[ni] = new PointF(currentCx + ringRadius * MathF.Cos(a), currentCy + ringRadius * MathF.Sin(a));
+                }
 
-                    // Distance from librarian
-                    float dx = x - hx;
-                    float dy = y - hy;
+                float wallRadius = (ringRadius + nodeRadiusScaled) - currentWallOffsetAdjustment * nodeRadiusScaled - (currentWallWidthAdjustment * nodeRadiusScaled) / 2f;
+                float walkwayRadius = ringRadius - currentWalkwayOffsetAdjustment * nodeRadiusScaled - (currentWalkwayWidthAdjustment * nodeRadiusScaled) / 2f;
+
+                computed.Add(new LayerSnapshot
+                {
+                    LayerScale = layerScale,
+                    RingRadius = ringRadius,
+                    NodeRadiusScaled = nodeRadiusScaled,
+                    LayerRotation = layerRotation,
+                    WallRadius = wallRadius,
+                    WalkwayRadius = walkwayRadius,
+                    BaseNodeRadius = currentBaseNodeRadius,
+                    NodeWorldPositions = nodeWorldPositions
+                });
+            }
+
+            // Draw computed world primitives transformed by camera (no extra scaling of radii except *ZoomFactor)
+            for (int li = 0; li < computed.Count; li++)
+            {
+                var snap = computed[li];
+
+                var (centerZx, centerZy) = WorldToZoom(currentCx, currentCy, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                float zRingRadius = snap.RingRadius * ZoomFactor;
+                byte ringAlpha = (byte)Math.Clamp(30 * (li + 1) / computed.Count, 0, 255);
+                using (var ringPen = new Pen(Color.FromArgb(ringAlpha, Color.White), Math.Max(0.5f, snap.LayerScale) * ZoomFactor))
+                    g.DrawEllipse(ringPen, centerZx - zRingRadius, centerZy - zRingRadius, 2 * zRingRadius, 2 * zRingRadius);
+
+                // walls
+                float wallThicknessWorld = Math.Max(0.5f, currentWallWidthAdjustment * snap.NodeRadiusScaled);
+                using (var wallPen = new Pen(Color.Goldenrod, wallThicknessWorld * ZoomFactor) { EndCap = LineCap.Round })
+                {
+                    var nodes = snap.NodeWorldPositions;
+                    for (int i = 0; i < nodes.Length; i++)
+                    {
+                        var p1 = nodes[i];
+                        var p2 = nodes[(i + 1) % nodes.Length];
+                        var (zx1, zy1) = WorldToZoom(p1.X, p1.Y, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                        var (zx2, zy2) = WorldToZoom(p2.X, p2.Y, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                        g.DrawLine(wallPen, zx1, zy1, zx2, zy2);
+                    }
+                }
+
+                // nodes
+                var nodePositions = snap.NodeWorldPositions;
+                for (int i = 0; i < nodePositions.Length; i++)
+                {
+                    var wp = nodePositions[i];
+                    float dx = wp.X - libWorldX;
+                    float dy = wp.Y - libWorldY;
                     float dist = MathF.Sqrt(dx * dx + dy * dy);
-                    if (dist > scaledZoomRadius) continue;
+                    if (dist > ZoomRadius) continue;
 
-                    // Scaled position with spacing
-                    float zx = zoomCx + dx * ZoomFactor * scaledSpacingFactor;
-                    float zy = zoomCy + dy * ZoomFactor * scaledSpacingFactor;
+                    var (zx, zy) = WorldToZoom(wp.X, wp.Y, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+                    float zRadius = snap.NodeRadiusScaled * ZoomFactor; // only once
 
-                    // Fixed scaled size
-                    float zRadius = BaseNodeRadius * ZoomFactor;
+                    int cylinder = disk > 1 ? (int)Math.Round((double)i / nodePositions.Length * (disk - 1)) : 0;
+                    Color fill = pendingSet.Contains(cylinder) ? Color.Yellow : Color.DarkGoldenrod;
 
-                    // Cylinder mapping
-                    int cylinder = diskSize > 1 ? (int)Math.Round((double)i / nodesThisLayer * (diskSize - 1)) : 0;
-                    Color fillColor = pendingSet.Contains(cylinder) ? Color.Yellow : Color.Brown;
-
-                    // Draw as hexagon
-                    PointF[] points = CreateRegularPolygonPoints(6, zRadius, zx, zy, angle + hexOrientationOffset);
-                    using (GraphicsPath path = new GraphicsPath())
+                    PointF[] poly = CreateRegularPolygonPoints(6, zRadius, zx, zy, hexOrientationOffset);
+                    using (var path = new GraphicsPath())
                     {
-                        path.AddPolygon(points);
-                        using (Brush brush = new SolidBrush(fillColor))
-                        {
-                            g.FillPath(brush, path);
-                        }
-                        using (Pen pen = new Pen(Color.Black))
-                        {
-                            g.DrawPath(pen, path);
-                        }
+                        path.AddPolygon(poly);
+                        using (var b = new SolidBrush(fill)) g.FillPath(b, path);
+                        using (var p = new Pen(Color.LightGoldenrodYellow, Math.Max(1f, 2f * (li + 1f) / Math.Max(1, computed.Count)) * ZoomFactor)) g.DrawPath(p, path);
                     }
                 }
 
-                // Draw inner librarian if within zoom
-                if (layerIndex < currentLayers - 1 && simState != null)
+                // walkway annulus
+                if (snap.WalkwayRadius > 0)
                 {
-                    float libRadiusFromCenterInner = ringRadius + (currentBaseNodeRadius * scale) * 2.0f;
-                    float libAngleInner = (float)(finalAngle + layerRotation);
-                    float libX = currentCx + libRadiusFromCenterInner * MathF.Cos(libAngleInner);
-                    float libY = currentCy + libRadiusFromCenterInner * MathF.Sin(libAngleInner);
-
-                    float dxInner = libX - hx;
-                    float dyInner = libY - hy;
-                    float distInner = MathF.Sqrt(dxInner * dxInner + dyInner * dyInner);
-                    if (distInner <= scaledZoomRadius)
+                    float walkwayThicknessWorld = currentWalkwayWidthAdjustment * snap.NodeRadiusScaled;
+                    float outerR = (snap.WalkwayRadius + walkwayThicknessWorld / 2f) * ZoomFactor;
+                    float innerR = Math.Max(0f, (snap.WalkwayRadius - walkwayThicknessWorld / 2f)) * ZoomFactor;
+                    using (var p = new GraphicsPath())
                     {
-                        float zxInner = zoomCx + dxInner * ZoomFactor * scaledSpacingFactor;
-                        float zyInner = zoomCy + dyInner * ZoomFactor * scaledSpacingFactor;
-                        float zLibRadiusInner = BaseNodeRadius * ZoomFactor * LibrarianSizeMultiplier;
-                        using (Brush innerLibBrush = new SolidBrush(Color.Blue))
-                        {
-                            g.FillEllipse(innerLibBrush, zxInner - zLibRadiusInner, zyInner - zLibRadiusInner, 2 * zLibRadiusInner, 2 * zLibRadiusInner);
-                        }
+                        p.AddEllipse(centerZx - outerR, centerZy - outerR, 2 * outerR, 2 * outerR);
+                        p.AddEllipse(centerZx - innerR, centerZy - innerR, 2 * innerR, 2 * innerR);
+                        using (var b = new SolidBrush(Color.FromArgb(200, Color.DarkGoldenrod))) g.FillPath(b, p);
                     }
                 }
             }
 
-            // Draw librarian
-            float zLibRadius = BaseNodeRadius * ZoomFactor * LibrarianSizeMultiplier;
-            using (Brush libBrush = new SolidBrush(Color.Blue))
-            {
-                g.FillEllipse(libBrush, zoomCx - zLibRadius, zoomCy - zLibRadius, 2 * zLibRadius, 2 * zLibRadius);
-            }
+            // Draw librarian and head (camera transform)
+            float libZr = currentLastNodeRadius * ZoomFactor * LibrarianSizeMultiplier;
+            using (var libBrush = new SolidBrush(Color.Blue)) g.FillEllipse(libBrush, zoomCx - libZr, zoomCy - libZr, 2 * libZr, 2 * libZr);
 
-            // Draw head
-            float zHeadRadius = Math.Max(3f, BaseNodeRadius * 0.5f) * ZoomFactor * LibrarianSizeMultiplier;
-            using (Brush headBrush = new SolidBrush(Color.Cyan))
-            {
-                g.FillEllipse(headBrush, zoomCx - zHeadRadius, zoomCy - zHeadRadius, 2 * zHeadRadius, 2 * zHeadRadius);
-            }
+            var (zxh, zyh) = WorldToZoom(headWorldX, headWorldY, libWorldX, libWorldY, zoomCx, zoomCy, ZoomFactor);
+            float headZr = Math.Max(3f, currentLastNodeRadius * 0.5f) * ZoomFactor * LibrarianSizeMultiplier;
+            using (var hb = new SolidBrush(Color.Cyan)) g.FillEllipse(hb, zxh - headZr, zyh - headZr, 2 * headZr, 2 * headZr);
+
+            g.SmoothingMode = oldSmoothing;
         }
 
-        /// <summary>
-        /// Creates points for a regular polygon.
-        /// </summary>
         private PointF[] CreateRegularPolygonPoints(int sides, float radius, float centerX, float centerY, float rotationRadians = 0f)
         {
             PointF[] points = new PointF[sides];

@@ -21,8 +21,6 @@ namespace LibraryOFBabel.Visualization
         private bool disposed = false;
 
         // --- Configurable properties (tweak these at runtime before calling Start) ---
-        public int LayerCount { get; set; } = 3;                            // preferred number of concentric layers
-        public int NodeCount { get; set; } = 30;                            // base number of nodes in innermost ring
         public float CoreRadiusFactor { get; set; } = 0.08f;               // core radius as fraction of min dimension
         public float MaxRadiusMarginFactor { get; set; } = 0.05f;          // margin from edges as fraction of min dimension
         public float NodeRadiusFactor { get; set; } = 0.35f;               // node radius as fraction of layer spacing (max)
@@ -47,25 +45,57 @@ namespace LibraryOFBabel.Visualization
         public float RotationSpeedRadiansPerSecond { get; set; } = 0.9f;
 
         public float LibrarianSpeedFactor { get; set; } = 1.3f;            // librarian speed relative to base rotation
-        public float LibrarianOffsetNodeFactor { get; set; } = 1.5f;     // librarian offset as multiple of outermost node radius
+        public float LibrarianOffsetNodeFactor { get; set; } = 1.1f;     // librarian offset as multiple of outermost node radius
         public float LibrarianRadiusFactor { get; set; } = 0.02f;          // librarian visual radius fraction of min dim
         public float LibrarianSizeMultiplier { get; set; } = 0.4f;       // multiplier for librarian size
-        public float PerspectivePower { get; set; } = 1.2f;               // power for perspective scaling
+
 
         /// <summary>
         /// Minimum radial gap between layers in pixels to prevent overlap and maintain visual separation.
         /// </summary>
-        public float MinLayerGap { get; set; } = 12f;
+        public float MinLayerGap { get; set; } = 15f;
 
         /// <summary>
         /// Adjustment for walkway width: negative extends outward, positive extends inward.
         /// </summary>
-        public float WalkwayWidthAdjustment { get; set; } = 30f;
+        public float WalkwayWidthAdjustment { get; set; } = 1f;
 
         /// <summary>
         /// Adjustment for walkway offset from ring center: negative offsets outward, positive offsets inward.
         /// </summary>
-        public float WalkwayOffsetAdjustment { get; set; } = 15f;
+        public float WalkwayOffsetAdjustment { get; set; } = 0.6f;
+
+        /// <summary>
+        /// Adjustment for wall width: negative extends outward, positive extends inward.
+        /// </summary>
+        public float WallWidthAdjustment { get; set; } = 1f;
+
+        /// <summary>
+        /// Adjustment for wall offset from hexagon outer radius: negative offsets outward, positive offsets inward.
+        /// </summary>
+        public float WallOffsetAdjustment { get; set; } = 0f;
+
+        /// <summary>
+        /// Amount of color darkening for depth effect: 0 = no darkening, 1 = full black at innermost layer.
+        /// </summary>
+        public float DarkenAmount { get; set; } = 0.8f;
+
+        /// <summary>
+        /// New Paramaters
+        /// </summary>
+        
+        public float MaxRadius { get; set; }
+        public int LayerCount { get; set; } = 3;
+        public int NodeCount { get; set; } = 200;
+
+        public float BaseNodeRadius { get; set; }
+
+        public float MinScale { get; set; } = 0.1f;
+
+        public float PerspectivePower { get; set; } = 1.2f;               // power for perspective scaling
+
+
+
 
         public byte GuideRingAlpha { get; set; } = 30;                     // alpha (0..255) for the guide ring
         public int AnimationIntervalMs
@@ -242,65 +272,38 @@ namespace LibraryOFBabel.Visualization
             float cy = info.Height / 2f;
             float minDim = Math.Min(info.Width, info.Height);
 
-            // Cache values for zoom panel
-            currentCx = cx;
-            currentCy = cy;
-            currentRotationAngle = fallbackAngle;
-
             // Maximum usable radius (leave margin)
             float margin = minDim * MaxRadiusMarginFactor + (minDim * CoreRadiusFactor);
-            float maxRadius = (minDim / 2f) - margin;
-            if (maxRadius < 0f) maxRadius = 0f;
-
-            // Determine desired spacing (pixels) and compute the maximum number of layers that fit
-            float desiredSpacing = Math.Max(8f, minDim * DesiredLayerSpacingFactor); // minimum spacing safeguard
-            int maxLayersThatFit = (int)Math.Floor(maxRadius / Math.Max(1f, desiredSpacing));
-            if (maxLayersThatFit < 1) maxLayersThatFit = 1;
+            MaxRadius = Math.Max(0f, minDim / 2f - margin);
 
             // Disk size for mapping nodes -> cylinders
             int diskSize = simState?.DiskSize ?? 1;
 
-            float lastNodeRadius = 0f;
+            // Compute base node radius
+            float circumference = 2f * MathF.PI * MaxRadius;
+            float nodeRadius = (circumference / Math.Max(1, NodeCount)) * 0.45f;
+            BaseNodeRadius = nodeRadius;
 
-            // Compute the maximum number of layers that fit based on perspective scaling and spacing constraints
-            // First, estimate baseNodeRadius for calculation
-            float tempBaseNodeRadius = Math.Max(1f, maxRadius * 0.35f); // rough estimate
-            int maxLayers = CalculateMaxLayers(maxRadius, tempBaseNodeRadius, MinLayerGap, PerspectivePower);
-
-            // Choose effective layer count: either auto-adjust to fit, or clamp configured LayerCount
-            int layers = AutoAdjustLayerCount ? maxLayers : Math.Min(LayerCount, maxLayers);
+            // Auto-adjust layers
+            int layers = AutoAdjustLayerCount ? CalculateMaxLayers(MaxRadius, BaseNodeRadius, MinLayerGap, PerspectivePower) : LayerCount;
 
             // Compute layer spacing for compatibility (outermost radius)
-            float layerSpacing = (layers > 0) ? (maxRadius / layers) : maxRadius;
+            float layerSpacing = (layers > 0) ? (MaxRadius / layers) : MaxRadius;
 
-            // Compute base node radius for outer layer
-            float baseNodeRadius = 0f;
-            {
-                float candidateBySpacing = (maxRadius / layers) * NodeRadiusFactor;
-                float circumference = 2f * MathF.PI * MathF.Max(0.0001f, maxRadius);
-                float candidateByCirc = (circumference / Math.Max(1, NodeCount)) * 0.45f;
-                float candidateByRadial = Math.Max(1f, (maxRadius / layers) * 0.9f / 2f);
-                baseNodeRadius = MathF.Min(candidateBySpacing, MathF.Min(candidateByCirc, candidateByRadial));
-                lastNodeRadius = baseNodeRadius;
-            }
-
-            // Compute the maximum number of layers that fit based on perspective scaling and spacing constraints
-            maxLayers = CalculateMaxLayers(maxRadius, baseNodeRadius, MinLayerGap, PerspectivePower);
-
-            // Choose effective layer count: either auto-adjust to fit, or clamp configured LayerCount
-            layers = AutoAdjustLayerCount ? maxLayers : Math.Min(LayerCount, maxLayers);
-
-            // Compute layer spacing for compatibility (outermost radius)
-            layerSpacing = (layers > 0) ? (maxRadius / layers) : maxRadius;
+            float lastNodeRadius = BaseNodeRadius;
 
             // Cache values
-            currentMaxRadius = maxRadius;
+            currentMaxRadius = MaxRadius;
             currentLayers = layers;
             currentLayerSpacing = layerSpacing;
-            currentBaseNodeRadius = baseNodeRadius;
+            currentBaseNodeRadius = BaseNodeRadius;
             currentLastNodeRadius = lastNodeRadius;
 
-            zoomDrawer?.UpdateCache(cx, cy, maxRadius, layers, layerSpacing, baseNodeRadius, lastNodeRadius, fallbackAngle, librarianAngleOffset);
+            // Prepare container to hold per-layer geometry snapshots for exact reuse by the zoom panel
+            var layerSnapshots = new List<LayerSnapshot>(Math.Max(1, layers));
+
+            // We'll call UpdateCache after we populate the snapshots (so zoomer has both global and per-layer data).
+            // (Note: zoomDrawer may be null in some unit tests; guard the call below.)
             // Draw center curiosity core scaled to layerSpacing
             using (var corePaint = new SKPaint { Color = SKColors.Yellow, IsAntialias = true, Style = SKPaintStyle.Fill })
             {
@@ -311,21 +314,13 @@ namespace LibraryOFBabel.Visualization
             // Prepare request set for quick lookup (map integers)
             var pendingSet = simState != null ? new HashSet<int>(simState.PendingRequests) : new HashSet<int>();
 
-            // Disk size for mapping nodes -> cylinders
-            diskSize = simState?.DiskSize ?? 1;
-
-            lastNodeRadius = 0f;
-
-            // Compute base node radius for outer layer
-            baseNodeRadius = 0f;
-            {
-                float candidateBySpacing = (maxRadius / layers) * NodeRadiusFactor;
-                float circumference = 2f * MathF.PI * MathF.Max(0.0001f, maxRadius);
-                float candidateByCirc = (circumference / Math.Max(1, NodeCount)) * 0.45f;
-                float candidateByRadial = Math.Max(1f, (maxRadius / layers) * 0.9f / 2f);
-                baseNodeRadius = MathF.Min(candidateBySpacing, MathF.Min(candidateByCirc, candidateByRadial));
-                lastNodeRadius = baseNodeRadius;
-            }
+            // Define base colors for depth effect
+            SKColor baseFillColor = SKColor.Parse("#B8860B");
+            SKColor baseWalkwayColor = SKColor.Parse("#B8860B");
+            SKColor baseBorderColor = SKColor.Parse("#FFD700");
+            SKColor baseWallColor = SKColor.Parse("#FFD700");
+            SKColor baseRingColor = SKColors.White;
+            SKColor baseStrokeColor = SKColors.Black;
 
             // Compute librarian angle
             double librarianAngle = 0.0;
@@ -342,38 +337,93 @@ namespace LibraryOFBabel.Visualization
             {
                 // perspective scaling
                 float t = layerIndex / (float)(layers - 1);
-                float scale = 0.1f + 0.9f * MathF.Pow(t, PerspectivePower);
-                float ringRadius = maxRadius * scale;
+                float layerScale = MinScale + (1 - MinScale) * MathF.Pow(t, PerspectivePower);
+                float ringRadius = MaxRadius * layerScale;
 
                 // nodes per layer stays constant
                 int nodesThisLayer = NodeCount;
+
+                float nodeRadiusScaled = MathF.Min(BaseNodeRadius * layerScale, (2f * MathF.PI * ringRadius / nodesThisLayer) * 0.45f);
 
                 // angle offset for this layer (rotation) — outermost does not rotate, inner rotate at different rates and alternating directions
                 float rotationMultiplier = (layers - layerIndex - 1) * 0.1f * (layerIndex % 2 == 0 ? 1f : -1f);
                 float layerRotation = (float)(fallbackAngle * rotationMultiplier);
 
-                float drawNodeRadius = baseNodeRadius * scale;
+                if (layerIndex == layers - 1) lastNodeRadius = BaseNodeRadius; // keep full for outer librarian
 
-                if (layerIndex == layers - 1) lastNodeRadius = baseNodeRadius; // keep full for outer librarian
+                // Compute depth factor for color darkening (0 = innermost, brightest; 1 = outermost, darkest)
+                // This replaces transparency-based darkening with color modification for proper depth effect without alpha blending
+                float depthFactor = 1 - (layerIndex / (float)layers);
+
+                // Compute layer-specific colors by darkening base colors based on depth
+                SKColor layerFillColor = DarkenColor(baseFillColor, depthFactor);
+                SKColor layerWalkwayColor = DarkenColor(baseWalkwayColor, depthFactor);
+                SKColor layerBorderColor = DarkenColor(baseBorderColor, depthFactor);
+                SKColor layerWallColor = DarkenColor(baseWallColor, depthFactor);
+                SKColor layerRingColor = DarkenColor(baseRingColor, depthFactor);
+                SKColor layerStrokeColor = DarkenColor(baseStrokeColor, depthFactor);
 
                 // Ring paint with gradual dimming for inner rings
                 byte ringAlpha = (byte)(GuideRingAlpha * (layerIndex + 1) / layers);
-                using var ringPaint = new SKPaint { Color = SKColors.White.WithAlpha(ringAlpha), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(0.5f, 1f * scale) };
+                var ringPaint = new SKPaint { Color = layerRingColor.WithAlpha(ringAlpha), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(0.5f, 1f * layerScale) };
 
                 // Node paints with gradual darkening for inner layers
-                byte nodeAlpha = (byte)(255 * (layerIndex + 1) / layers);
-                using var baseFill = new SKPaint { Color = SKColor.Parse("#B8860B").WithAlpha(nodeAlpha), IsAntialias = true, Style = SKPaintStyle.Fill };
-                using var requestedFill = new SKPaint { Color = SKColors.Yellow, IsAntialias = true, Style = SKPaintStyle.Fill }; // keep requested full brightness
-                using var strokePaint = new SKPaint { Color = SKColors.Black.WithAlpha((byte)(200 * (layerIndex + 1) / layers)), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(0.5f, 1f * scale) };
-                using var borderPaint = new SKPaint { Color = SKColor.Parse("#FFD700"), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 2f * (layerIndex + 1f) / layers };
+                var baseFill = new SKPaint { Color = layerFillColor, IsAntialias = true, Style = SKPaintStyle.Fill };
+                var requestedFill = new SKPaint { Color = SKColors.Yellow, IsAntialias = true, Style = SKPaintStyle.Fill }; // keep requested full brightness
+                var strokePaint = new SKPaint { Color = layerStrokeColor, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(0.5f, 1f * layerScale) };
+                var borderPaint = new SKPaint { Color = layerBorderColor, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 2f * (layerIndex + 1f) / layers };
 
-                // ----- MAIN LAYER -----
-                // draw ring faint
-                canvas.DrawCircle(cx, cy, ringRadius + drawNodeRadius * 0.6f, ringPaint);
+                // Compute wall parameters for this layer
+                float S = layerScale;
+                float wallThickness = WallWidthAdjustment * nodeRadiusScaled;
+                float wallRadius = (ringRadius + nodeRadiusScaled) - WallOffsetAdjustment * nodeRadiusScaled - wallThickness / 2f;
+                var wallPaint = new SKPaint { Color = layerWallColor, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = wallThickness };
 
-                // angle step and draw nodes
+                // --- Capture per-node world positions for this layer into a snapshot (used by zoom panel) ---
+                var nodeWorldPositions = new PointF[nodesThisLayer];
                 float angleStep = (2f * MathF.PI) / nodesThisLayer;
+                for (int ni = 0; ni < nodesThisLayer; ni++)
+                {
+                    float angle = (ni * angleStep) + layerRotation;
+                    float x = cx + ringRadius * MathF.Cos(angle);
+                    float y = cy + ringRadius * MathF.Sin(angle);
+                    nodeWorldPositions[ni] = new PointF(x, y);
+                }
 
+                float walkwayThickness = WalkwayWidthAdjustment * nodeRadiusScaled;
+                float walkwayRadius = ringRadius - WalkwayOffsetAdjustment * nodeRadiusScaled - walkwayThickness / 2f;
+
+                layerSnapshots.Add(new LayerSnapshot
+                {
+                    LayerScale = layerScale,
+                    RingRadius = ringRadius,
+                    NodeRadiusScaled = nodeRadiusScaled,
+                    LayerRotation = layerRotation,
+                    WallRadius = wallRadius,
+                    WalkwayRadius = walkwayRadius,
+                    BaseNodeRadius = BaseNodeRadius,
+                    NodeWorldPositions = nodeWorldPositions
+                });
+
+                // ----- MAIN LAYER ----- (the exact same drawing code as before; retained unchanged)
+                // draw ring faint
+                canvas.DrawCircle(cx, cy, ringRadius + nodeRadiusScaled * 0.6f, ringPaint);
+
+                // First pass: draw walls between adjacent nodes
+                for (int i = 0; i < nodesThisLayer; i++)
+                {
+                    float angle_i = (i * angleStep) + layerRotation;
+                    float angle_next = ((i + 1) % nodesThisLayer) * angleStep + layerRotation;
+
+                    float x1 = cx + wallRadius * MathF.Cos(angle_i);
+                    float y1 = cy + wallRadius * MathF.Sin(angle_i);
+                    float x2 = cx + wallRadius * MathF.Cos(angle_next);
+                    float y2 = cy + wallRadius * MathF.Sin(angle_next);
+
+                    canvas.DrawLine(x1, y1, x2, y2, wallPaint);
+                }
+
+                // Second pass: draw all node fills
                 for (int i = 0; i < nodesThisLayer; i++)
                 {
                     float angle = (i * angleStep) + layerRotation;
@@ -386,8 +436,19 @@ namespace LibraryOFBabel.Visualization
                     // choose paint (requested -> yellow)
                     var fill = pendingSet.Contains(cylinder) ? requestedFill : baseFill;
 
-                    var nodePath = CreateRegularPolygonPath(6, drawNodeRadius, x, y, angle + HexOrientationOffset);
+                    var nodePath = CreateRegularPolygonPath(6, nodeRadius, x, y, angle + HexOrientationOffset);
                     canvas.DrawPath(nodePath, fill);
+                    nodePath.Dispose();
+                }
+
+                // Third pass: draw node borders and strokes
+                for (int i = 0; i < nodesThisLayer; i++)
+                {
+                    float angle = (i * angleStep) + layerRotation;
+                    float x = cx + ringRadius * MathF.Cos(angle);
+                    float y = cy + ringRadius * MathF.Sin(angle);
+
+                    var nodePath = CreateRegularPolygonPath(6, nodeRadius, x, y, angle + HexOrientationOffset);
                     canvas.DrawPath(nodePath, borderPaint);
                     canvas.DrawPath(nodePath, strokePaint);
                     nodePath.Dispose();
@@ -395,13 +456,9 @@ namespace LibraryOFBabel.Visualization
 
                 // Draw walkway ring above hexagons, below librarian
                 {
-                    float S = scale;
-                    float thickness = WalkwayWidthAdjustment * S;
-                    float walkwayRadius = ringRadius - WalkwayOffsetAdjustment * S - thickness / 2f;
-                    float outerRadiusWalk = walkwayRadius + thickness / 2f;
-                    float innerRadiusWalk = Math.Max(0f, walkwayRadius - thickness / 2f);
-                    byte walkwayAlpha = (byte)(nodeAlpha * scale);
-                    using var walkwayPaint = new SKPaint { Color = SKColor.Parse("#B8860B").WithAlpha(walkwayAlpha), IsAntialias = true, Style = SKPaintStyle.Fill };
+                    float outerRadiusWalk = walkwayRadius + walkwayThickness / 2f;
+                    float innerRadiusWalk = Math.Max(0f, walkwayRadius - walkwayThickness / 2f);
+                    var walkwayPaint = new SKPaint { Color = layerWalkwayColor, IsAntialias = true, Style = SKPaintStyle.Fill };
                     var walkwayPath = new SKPath();
                     walkwayPath.AddCircle(cx, cy, outerRadiusWalk);
                     walkwayPath.AddCircle(cx, cy, innerRadiusWalk, SKPathDirection.CounterClockwise);
@@ -412,15 +469,41 @@ namespace LibraryOFBabel.Visualization
                 // Draw inner librarian for this layer, mirroring the outer
                 if (layerIndex < layers - 1 && simState != null)
                 {
-                    float libRadiusFromCenter = ringRadius - drawNodeRadius * LibrarianOffsetNodeFactor;
+                    float libRadiusFromCenter = ringRadius - nodeRadiusScaled * LibrarianOffsetNodeFactor;
                     float libAngle = (float)(librarianAngle + layerRotation);
                     float libX = cx + libRadiusFromCenter * MathF.Cos(libAngle);
                     float libY = cy + libRadiusFromCenter * MathF.Sin(libAngle);
 
-                    using var innerLibPaint = new SKPaint { Color = SKColors.Blue.WithAlpha(nodeAlpha), IsAntialias = false, Style = SKPaintStyle.Fill };
-                    canvas.DrawCircle(libX, libY, drawNodeRadius * LibrarianSizeMultiplier, innerLibPaint);
+                    using var innerLibPaint = new SKPaint { Color = DarkenColor(SKColors.Blue, depthFactor), IsAntialias = false, Style = SKPaintStyle.Fill };
+                    canvas.DrawCircle(libX, libY, nodeRadiusScaled * LibrarianSizeMultiplier, innerLibPaint);
                 }
+
+                ringPaint.Dispose();
+                baseFill.Dispose();
+                requestedFill.Dispose();
+                strokePaint.Dispose();
+                borderPaint.Dispose();
+                wallPaint.Dispose();
             }
+
+            // Pass snapshots to zoom drawer so it can render an exact camera viewport
+            zoomDrawer?.UpdateCache(
+                cx,
+                cy,
+                MaxRadius,
+                layers,
+                layerSpacing,
+                BaseNodeRadius,
+                lastNodeRadius,
+                fallbackAngle,
+                librarianAngleOffset,
+                MinScale,
+                LibrarianOffsetNodeFactor,
+                WallWidthAdjustment,
+                WallOffsetAdjustment,
+                WalkwayWidthAdjustment,
+                WalkwayOffsetAdjustment,
+                layerSnapshots);
 
             // Draw head / librarian on outermost layer.
             if (simState != null)
@@ -429,11 +512,10 @@ namespace LibraryOFBabel.Visualization
                 int disk = Math.Max(1, simState.DiskSize);
                 // map headPos to angle around circle (outermost)
                 double headAngle = (headPos / (double)disk) * (Math.PI * 2.0);
-
                 // fallback rotation addition
                 double finalAngle = headAngle + librarianAngleOffset;
 
-                float outerRadius = layerSpacing * layers;
+                float outerRadius = MaxRadius;
                 float libOutwardOffset = lastNodeRadius * LibrarianOffsetNodeFactor;
                 float libRadiusFromCenter = outerRadius - libOutwardOffset;
 
@@ -441,7 +523,7 @@ namespace LibraryOFBabel.Visualization
                 float hy = cy + libRadiusFromCenter * MathF.Sin((float)finalAngle);
 
                 // draw head and librarian: head = cyan, librarian = blue fill scaled to node size
-                using var libPaint = new SKPaint { Color = SKColors.Blue, IsAntialias = false, Style = SKPaintStyle.Fill };
+                using var libPaint = new SKPaint { Color = DarkenColor(SKColors.Blue, 0f), IsAntialias = false, Style = SKPaintStyle.Fill };
 
                 canvas.DrawCircle(hx, hy, lastNodeRadius * LibrarianSizeMultiplier, libPaint);
             }
@@ -461,7 +543,7 @@ namespace LibraryOFBabel.Visualization
                 double finalHeadAngle = headAngle + fallbackAngle;
                 double finalNextAngle = nextAngle + fallbackAngle;
 
-                float outerRadius = layerSpacing * layers;
+                float outerRadius = MaxRadius;
                 float libOutwardOffset = lastNodeRadius * LibrarianOffsetNodeFactor;
                 float radius = outerRadius - libOutwardOffset;
 
@@ -753,6 +835,18 @@ namespace LibraryOFBabel.Visualization
                 librarianAngleOffset += dx * 0.01f; // adjust factor as needed
             }
             previousMousePosition = new Point(e.X, e.Y);
+        }
+
+        /// <summary>
+        /// Darkens a color based on depth factor for depth effect without transparency.
+        /// </summary>
+        private SKColor DarkenColor(SKColor baseColor, float depthFactor)
+        {
+            float factor = 1 - DarkenAmount * depthFactor;
+            byte r = (byte)(baseColor.Red * factor);
+            byte g = (byte)(baseColor.Green * factor);
+            byte b = (byte)(baseColor.Blue * factor);
+            return new SKColor(r, g, b);
         }
     }
 }
