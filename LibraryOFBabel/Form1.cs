@@ -11,7 +11,7 @@ namespace LibraryOFBabel
 {
     public partial class Form1 : Form
     {
-        private DiskVisualizationRenderer? renderer;
+        private RadialRenderer? renderer;
         private ControlManager? controlManager;
         private ToolTip? sharedToolTip;
         private SimulationEngine? engine;
@@ -32,18 +32,13 @@ namespace LibraryOFBabel
 
         private void InitializeVisualization()
         {
-            renderer = new DiskVisualizationRenderer();
+            renderer = new RadialRenderer();
 
             // Enable diagnostics optionally
             renderer.EnableDiagnostics = false;
 
             panelVisualizer.Controls.Add(renderer.GetVisualizationControl());
             renderer.Start();
-
-            // Wire zoom panel
-            renderer.PanelZoom = panelZoom;
-            typeof(Panel).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.SetValue(panelZoom, true);
-            panelZoom.Paint += (s, e) => renderer.ZoomPanel.Draw(e.Graphics, panelZoom.Width, panelZoom.Height, renderer.Engine, renderer.PerspectivePower, renderer.NodeCount, renderer.HexOrientationOffset);
 
             // single form-closing handler to dispose owned resources
             this.FormClosing += OnFormClosing;
