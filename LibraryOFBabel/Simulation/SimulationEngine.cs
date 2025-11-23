@@ -9,7 +9,9 @@ namespace LibraryOFBabel.Simulation
         FCFS,
         SSTF,
         SCAN,
-        CSCAN
+        CSCAN,
+        LOOK,
+        CLOOK
     }
 
     public sealed class SimulationStats
@@ -79,29 +81,45 @@ namespace LibraryOFBabel.Simulation
         }
 
         // Step: moves head to the next request according to current algorithm.
-        // Returns true if a request was served; false if no pending requests.
+        // Returns true if a request was served; false if no pending requests or the step moved to an edge without serving.
         public bool Step()
         {
             if (disposed) throw new ObjectDisposedException(nameof(SimulationEngine));
             if (!state.pendingRequests.Any()) return false;
 
+            int disk = Math.Max(1, state.DiskSize);
+
             int target = ChooseNextRequest();
             // Move head directly to target (single-step behavior per user request)
             var distance = Math.Abs(state.HeadPosition - target);
             stats.TotalSeekDistance += distance;
-            stats.RequestsServed += 1;
 
-            // update direction based on move (capture previous head for correct direction)
+            // capture previous head for correct direction
             int prev = state.HeadPosition;
             state.HeadPosition = target;
             if (distance > 0) state.Direction = (target > prev) ? +1 : -1;
 
-            // remove one instance of the served request (FCFS serves first, others chosen by value)
-            var removed = state.pendingRequests.Remove(target);
-            // For FCFS we should remove the earliest inserted matching the target value:
-            // (the list.Remove removes first occurrence which preserves FCFS semantics when target is the first entry)
+            // Special-case: for SCAN, if we reached a physical edge, flip direction now so subsequent NextRequest reflects reversal
+            if (state.Algorithm == SchedulingAlgorithm.SCAN)
+            {
+                if (state.HeadPosition == 0)
+                {
+                    state.Direction = +1;
+                }
+                else if (state.HeadPosition == disk - 1)
+                {
+                    state.Direction = -1;
+                }
+            }
 
-            RaiseStatisticsChanged();
+            // remove one instance of the served request (if present)
+            var removed = state.pendingRequests.Remove(target);
+            if (removed)
+            {
+                stats.RequestsServed += 1;
+                RaiseStatisticsChanged();
+            }
+
             RaiseStateChanged();
             return removed;
         }
@@ -114,16 +132,89 @@ namespace LibraryOFBabel.Simulation
                 SchedulingAlgorithm.SSTF => state.pendingRequests.OrderBy(r => Math.Abs(r - state.HeadPosition)).First(),
                 SchedulingAlgorithm.SCAN => ChooseScanNext(wrap: false),
                 SchedulingAlgorithm.CSCAN => ChooseScanNext(wrap: true),
+                SchedulingAlgorithm.LOOK => ChooseLookNext(wrap: false),
+                SchedulingAlgorithm.CLOOK => ChooseLookNext(wrap: true),
                 _ => state.pendingRequests.First()
             };
         }
 
         private int ChooseScanNext(bool wrap)
         {
-            // robust SCAN/CSCAN selection:
-            // - prefer requests in current direction
-            // - if none, for circular (wrap=true) jump to far side and continue
-            // - if non-circular, reverse direction and pick farthest in new direction
+            // SCAN/C-SCAN: force travel to disk edge before reversing/wrapping
+            var pending = state.pendingRequests;
+            if (!pending.Any()) throw new InvalidOperationException("No pending requests");
+
+            int head = state.HeadPosition;
+            int dir = state.Direction >= 0 ? 1 : -1;
+            int disk = Math.Max(1, state.DiskSize);
+
+            if (dir >= 0)
+            {
+                // requests at or ahead of head ascending
+                var ahead = pending.Where(r => r >= head).OrderBy(r => r).ToList();
+                var behind = pending.Where(r => r < head).OrderByDescending(r => r).ToList();
+
+                if (ahead.Any()) return ahead.First();
+
+                // no requests ahead
+                if (head != disk - 1)
+                {
+                    // need to travel to the end first
+                    return disk - 1;
+                }
+
+                // already at end
+                if (wrap)
+                {
+                    // circular: wrap to smallest pending
+                    return pending.OrderBy(r => r).First();
+                }
+
+                // non-circular: reverse direction and pick the farthest behind
+                if (behind.Any())
+                {
+                    return behind.First();
+                }
+
+                // fallback
+                return pending.OrderBy(r => r).First();
+            }
+            else
+            {
+                // dir < 0: service <= head descending
+                var behind = pending.Where(r => r <= head).OrderByDescending(r => r).ToList();
+                var ahead = pending.Where(r => r > head).OrderBy(r => r).ToList();
+
+                if (behind.Any()) return behind.First();
+
+                // no requests behind
+                if (head != 0)
+                {
+                    // travel to start first
+                    return 0;
+                }
+
+                // already at start
+                if (wrap)
+                {
+                    // circular: wrap to largest pending
+                    return pending.OrderByDescending(r => r).First();
+                }
+
+                // non-circular: reverse direction and pick the smallest ahead
+                if (ahead.Any())
+                {
+                    return ahead.First();
+                }
+
+                // fallback
+                return pending.OrderByDescending(r => r).First();
+            }
+        }
+
+        private int ChooseLookNext(bool wrap)
+        {
+            // LOOK/C-LOOK: do not travel to disk edge; behave like classic LOOK
             var pending = state.pendingRequests;
             if (!pending.Any()) throw new InvalidOperationException("No pending requests");
 
@@ -132,48 +223,44 @@ namespace LibraryOFBabel.Simulation
 
             if (dir >= 0)
             {
-                // requests at or ahead of head ascending
                 var ahead = pending.Where(r => r >= head).OrderBy(r => r).ToList();
+                var behind = pending.Where(r => r < head).OrderByDescending(r => r).ToList();
+
                 if (ahead.Any()) return ahead.First();
 
                 if (wrap)
                 {
-                    // circular: go to the smallest (wrap-around)
+                    // C-LOOK: jump to smallest pending (wrap-around among requests)
                     return pending.OrderBy(r => r).First();
                 }
 
-                // non-circular: reverse direction and take the farthest behind (largest < head)
-                var behind = pending.Where(r => r < head).OrderByDescending(r => r).ToList();
+                // LOOK: reverse direction and pick farthest behind (largest < head)
                 if (behind.Any())
                 {
-                    state.Direction = -1;
                     return behind.First();
                 }
 
-                // fallback: choose the smallest available
                 return pending.OrderBy(r => r).First();
             }
             else
             {
-                // dir < 0: service <= head descending
                 var behind = pending.Where(r => r <= head).OrderByDescending(r => r).ToList();
+                var ahead = pending.Where(r => r > head).OrderBy(r => r).ToList();
+
                 if (behind.Any()) return behind.First();
 
                 if (wrap)
                 {
-                    // circular: jump to the largest (wrap-around)
+                    // C-LOOK: jump to largest pending
                     return pending.OrderByDescending(r => r).First();
                 }
 
-                // non-circular: reverse direction and choose smallest ahead
-                var ahead2 = pending.Where(r => r > head).OrderBy(r => r).ToList();
-                if (ahead2.Any())
+                // LOOK: reverse direction and pick smallest ahead
+                if (ahead.Any())
                 {
-                    state.Direction = +1;
-                    return ahead2.First();
+                    return ahead.First();
                 }
 
-                // fallback: pick largest
                 return pending.OrderByDescending(r => r).First();
             }
         }

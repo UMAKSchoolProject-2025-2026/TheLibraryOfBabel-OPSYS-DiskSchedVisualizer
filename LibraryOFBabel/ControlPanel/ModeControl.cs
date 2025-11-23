@@ -29,6 +29,9 @@ namespace LibraryOFBabel.ControlPanel
         // suppress programmatic changes from raising events
         private bool suppressValueChangedEvents;
 
+        // Placeholder text shown in combo box when no valid algorithm is selected
+        private const string AlgorithmPlaceholderText = "Please select an algorithm";
+
         public ModeControl()
         {
             InitializeComponent();
@@ -42,10 +45,14 @@ namespace LibraryOFBabel.ControlPanel
         {
             // Populate algorithm choices (text must match mapping used later)
             cboBoxSchedulingAlgorithm.Items.Clear();
+            // Add placeholder as first item so UI starts disabled until user selects a real algorithm
+            cboBoxSchedulingAlgorithm.Items.Add(AlgorithmPlaceholderText);
             cboBoxSchedulingAlgorithm.Items.Add("FCFS");
             cboBoxSchedulingAlgorithm.Items.Add("SSTF");
             cboBoxSchedulingAlgorithm.Items.Add("SCAN");
             cboBoxSchedulingAlgorithm.Items.Add("C-SCAN");
+            cboBoxSchedulingAlgorithm.Items.Add("LOOK");
+            cboBoxSchedulingAlgorithm.Items.Add("C-LOOK");
             cboBoxSchedulingAlgorithm.SelectedIndex = 0;
 
             // Wire buttons & controls
@@ -64,14 +71,26 @@ namespace LibraryOFBabel.ControlPanel
             cboBoxSchedulingAlgorithm.SelectedIndexChanged += (s, e) =>
             {
                 var text = cboBoxSchedulingAlgorithm.SelectedItem?.ToString() ?? string.Empty;
+                // If the placeholder is selected, keep the rest of the UI disabled and do not raise AlgorithmChanged
+                if (text == AlgorithmPlaceholderText)
+                {
+                    UpdateControlsEnabledState(false);
+                    return;
+                }
+
                 var alg = text switch
                 {
                     "FCFS" => SchedulingAlgorithm.FCFS,
                     "SSTF" => SchedulingAlgorithm.SSTF,
                     "SCAN" => SchedulingAlgorithm.SCAN,
                     "C-SCAN" => SchedulingAlgorithm.CSCAN,
+                    "LOOK" => SchedulingAlgorithm.LOOK,
+                    "C-LOOK" => SchedulingAlgorithm.CLOOK,
                     _ => SchedulingAlgorithm.FCFS
                 };
+
+                // Enable all other controls now that a valid algorithm is selected
+                UpdateControlsEnabledState(true);
                 AlgorithmChanged?.Invoke(this, alg);
             };
 
@@ -103,6 +122,28 @@ namespace LibraryOFBabel.ControlPanel
             // numeric up-down changes
             nudDiskSize.ValueChanged += NudDiskSize_ValueChanged;
             nudHeadStartPos.ValueChanged += NudHeadStartPos_ValueChanged;
+
+            // Start with everything disabled except the algorithm combo box
+            UpdateControlsEnabledState(false);
+        }
+
+        /// <summary>
+        /// Enable or disable all interactive controls except the algorithm combo box.
+        /// Used to gray out the UI until the user picks a valid algorithm.
+        /// </summary>
+        private void UpdateControlsEnabledState(bool enabled)
+        {
+            // Controls to toggle
+            btnPlay.Enabled = enabled;
+            trkBarSimSpeed.Enabled = enabled;
+            btnNextStep.Enabled = enabled;
+            btnReset.Enabled = enabled;
+            btnAddRequest.Enabled = enabled;
+            btnGenRandRequest.Enabled = enabled;
+            btnClearRequest.Enabled = enabled;
+            rTxtBoxRequestList.Enabled = enabled;
+            nudDiskSize.Enabled = enabled;
+            nudHeadStartPos.Enabled = enabled;
         }
 
         private void NudDiskSize_ValueChanged(object? sender, EventArgs e)
@@ -231,10 +272,14 @@ namespace LibraryOFBabel.ControlPanel
                 SchedulingAlgorithm.SSTF => "SSTF",
                 SchedulingAlgorithm.SCAN => "SCAN",
                 SchedulingAlgorithm.CSCAN => "C-SCAN",
+                SchedulingAlgorithm.LOOK => "LOOK",
+                SchedulingAlgorithm.CLOOK => "C-LOOK",
                 _ => "FCFS"
             };
             var idx = cboBoxSchedulingAlgorithm.Items.IndexOf(text);
             if (idx >= 0) cboBoxSchedulingAlgorithm.SelectedIndex = idx;
+            // Ensure controls are enabled when setting a valid algorithm programmatically
+            if (idx >= 0) UpdateControlsEnabledState(true);
         }
 
         // Designer expects this handler to exist; keep as a no-op or add startup logic here.

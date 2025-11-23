@@ -382,6 +382,26 @@ namespace LibraryOFBabel.ControlPanel
                     SetFinalVisitOrder(simcscan.VisitOrder);
                     break;
                 }
+
+                case SchedulingAlgorithm.LOOK:
+                {
+                    var simlook = LOOK.Simulate(state, circular: false);
+                    txtBoxTotalSeekTime.Text = (stats.TotalSeekDistance + simlook.TotalDistance).ToString();
+                    txtBoxAverageSeekTime.Text = ((stats.RequestsServed + simlook.VisitOrder.Count) == 0 ? 0 : (double)(stats.TotalSeekDistance + simlook.TotalDistance) / (stats.RequestsServed + simlook.VisitOrder.Count)).ToString("F2");
+                    SetVisibilityForAlgorithm(false);
+                    SetFinalVisitOrder(simlook.VisitOrder);
+                    break;
+                }
+
+                case SchedulingAlgorithm.CLOOK:
+                {
+                    var simclook = CLOOK.Simulate(state);
+                    txtBoxTotalSeekTime.Text = (stats.TotalSeekDistance + simclook.TotalDistance).ToString();
+                    txtBoxAverageSeekTime.Text = ((stats.RequestsServed + simclook.VisitOrder.Count) == 0 ? 0 : (double)(stats.TotalSeekDistance + simclook.TotalDistance) / (stats.RequestsServed + simclook.VisitOrder.Count)).ToString("F2");
+                    SetVisibilityForAlgorithm(false);
+                    SetFinalVisitOrder(simclook.VisitOrder);
+                    break;
+                }
             }
 
             // update upcoming panel
@@ -423,8 +443,10 @@ namespace LibraryOFBabel.ControlPanel
                 {
                     SchedulingAlgorithm.FCFS => pending.First(),
                     SchedulingAlgorithm.SSTF => pending.OrderBy(r => Math.Abs(r - state.HeadPosition)).First(),
-                    SchedulingAlgorithm.SCAN => pending.Contains(state.HeadPosition) ? state.HeadPosition : pending.First(),
-                    SchedulingAlgorithm.CSCAN => pending.First(),
+                    SchedulingAlgorithm.SCAN => DetermineScanUpcoming(state),
+                    SchedulingAlgorithm.CSCAN => DetermineCScanUpcoming(state),
+                    SchedulingAlgorithm.LOOK => DetermineLookUpcoming(state),
+                    SchedulingAlgorithm.CLOOK => DetermineCLookUpcoming(state),
                     _ => pending.First()
                 };
             }
@@ -440,6 +462,94 @@ namespace LibraryOFBabel.ControlPanel
             {
                 mgc.EnsureAxis(pending, state.HeadPosition, state.DiskSize);
                 // do NOT call mgc.SetDiagramData here on every tick; Observe predicted sequences only when user requests animation
+            }
+        }
+
+        private int DetermineScanUpcoming(SimulationState state)
+        {
+            var pending = state.PendingRequests;
+            int head = state.HeadPosition;
+            int dir = state.Direction >= 0 ? 1 : -1;
+            int disk = Math.Max(1, state.DiskSize);
+
+            if (dir >= 0)
+            {
+                var ahead = pending.Where(r => r >= head).OrderBy(r => r).ToList();
+                if (ahead.Any()) return ahead.First();
+                // if none ahead, SCAN intends to go to end first
+                return disk - 1;
+            }
+            else
+            {
+                var behind = pending.Where(r => r <= head).OrderByDescending(r => r).ToList();
+                if (behind.Any()) return behind.First();
+                return 0;
+            }
+        }
+
+        private int DetermineCScanUpcoming(SimulationState state)
+        {
+            var pending = state.PendingRequests;
+            int head = state.HeadPosition;
+            int dir = state.Direction >= 0 ? 1 : -1;
+
+            if (dir >= 0)
+            {
+                var ahead = pending.Where(r => r >= head).OrderBy(r => r).ToList();
+                if (ahead.Any()) return ahead.First();
+                // otherwise jump to smallest pending
+                return pending.OrderBy(r => r).First();
+            }
+            else
+            {
+                var behind = pending.Where(r => r <= head).OrderByDescending(r => r).ToList();
+                if (behind.Any()) return behind.First();
+                return pending.OrderByDescending(r => r).First();
+            }
+        }
+
+        private int DetermineLookUpcoming(SimulationState state)
+        {
+            var pending = state.PendingRequests;
+            int head = state.HeadPosition;
+            int dir = state.Direction >= 0 ? 1 : -1;
+
+            if (dir >= 0)
+            {
+                var ahead = pending.Where(r => r >= head).OrderBy(r => r).ToList();
+                if (ahead.Any()) return ahead.First();
+                // reverse direction and pick farthest behind
+                var behind = pending.Where(r => r < head).OrderByDescending(r => r).ToList();
+                if (behind.Any()) return behind.First();
+                return pending.OrderBy(r => r).First();
+            }
+            else
+            {
+                var behind = pending.Where(r => r <= head).OrderByDescending(r => r).ToList();
+                if (behind.Any()) return behind.First();
+                var ahead = pending.Where(r => r > head).OrderBy(r => r).ToList();
+                if (ahead.Any()) return ahead.First();
+                return pending.OrderByDescending(r => r).First();
+            }
+        }
+
+        private int DetermineCLookUpcoming(SimulationState state)
+        {
+            var pending = state.PendingRequests;
+            int head = state.HeadPosition;
+            int dir = state.Direction >= 0 ? 1 : -1;
+
+            if (dir >= 0)
+            {
+                var ahead = pending.Where(r => r >= head).OrderBy(r => r).ToList();
+                if (ahead.Any()) return ahead.First();
+                return pending.OrderBy(r => r).First();
+            }
+            else
+            {
+                var behind = pending.Where(r => r <= head).OrderByDescending(r => r).ToList();
+                if (behind.Any()) return behind.First();
+                return pending.OrderByDescending(r => r).First();
             }
         }
 
