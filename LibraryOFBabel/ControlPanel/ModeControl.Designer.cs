@@ -122,6 +122,7 @@
             rTxtBoxRequestList.Size = new Size(286, 125);
             rTxtBoxRequestList.TabIndex = 7;
             rTxtBoxRequestList.Text = "";
+            rTxtBoxRequestList.TextChanged += rTxtBoxRequestList_TextChanged;
             // 
             // nudDiskSize
             // 
@@ -149,11 +150,9 @@
             nudHeadStartPos.Font = new Font("Segoe UI", 12F, FontStyle.Regular, GraphicsUnit.Point, 0);
             nudHeadStartPos.Location = new Point(161, 43);
             nudHeadStartPos.Maximum = new decimal(new int[] { 10000, 0, 0, 0 });
-            nudHeadStartPos.Minimum = new decimal(new int[] { 50, 0, 0, 0 });
             nudHeadStartPos.Name = "nudHeadStartPos";
             nudHeadStartPos.Size = new Size(107, 29);
             nudHeadStartPos.TabIndex = 4;
-            nudHeadStartPos.Value = new decimal(new int[] { 50, 0, 0, 0 });
             // 
             // label2
             // 
@@ -245,12 +244,11 @@
             // trkBarSimSpeed
             // 
             trkBarSimSpeed.Location = new Point(19, 129);
-            trkBarSimSpeed.Minimum = 1;
             trkBarSimSpeed.Name = "trkBarSimSpeed";
             trkBarSimSpeed.RightToLeft = RightToLeft.Yes;
             trkBarSimSpeed.Size = new Size(291, 45);
             trkBarSimSpeed.TabIndex = 15;
-            trkBarSimSpeed.Value = 10;
+            trkBarSimSpeed.Value = 5;
             // 
             // btnReset
             // 

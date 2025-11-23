@@ -16,8 +16,9 @@ namespace LibraryOFBabel.Visualization
         /// <summary>
         /// Draw debug overlays for the provided nodes. No-op when <see cref="DebugEnabled"/> is false.
         /// The viewportScale parameter is the effective world->device pixels scale applied by the renderer.
+        /// Expects node positions in 'nodes' to already be multiplied by densityScale.
         /// </summary>
-        public void DrawOverlays(SKCanvas canvas, IEnumerable<NodePos> nodes, RadialConfig cfg, float viewportScale)
+        public void DrawOverlays(SKCanvas canvas, IEnumerable<NodePos> nodes, RadialConfig cfg, float viewportScale, float densityScale)
         {
             if (!DebugEnabled || canvas == null || nodes == null || cfg == null) return;
 
@@ -31,15 +32,15 @@ namespace LibraryOFBabel.Visualization
             // Bounding box paint (keep stroke ~1 device pixel)
             using var boxPaint = SKPaintFactory.CreateStroke(SKColors.Lime, 1f / vs);
 
-            // marker radius: at least 1 screen pixel (converted to world units) or a fraction of node size
-            float markerRadius = Math.Max(1f / vs, cfg.NodeSize * 0.25f);
+            // marker radius: at least 1 screen pixel (converted to world units) or a fraction of node size (scaled)
+            float markerRadius = Math.Max(1f / vs, cfg.NodeSize * 0.25f * densityScale);
 
             // box size: prefer node-based but ensure a minimum screen size (e.g. 2 pixels)
-            float boxSize = Math.Max(2f / vs, cfg.NodeSize * 2f);
+            float boxSize = Math.Max(2f / vs, cfg.NodeSize * 2f * densityScale);
 
             foreach (var n in nodes)
             {
-                // anchor line from center to node
+                // anchor line from center to node (nodes are already scaled)
                 canvas.DrawLine(0f, 0f, n.X, n.Y, anchorPaint);
 
                 // position marker (small filled circle)

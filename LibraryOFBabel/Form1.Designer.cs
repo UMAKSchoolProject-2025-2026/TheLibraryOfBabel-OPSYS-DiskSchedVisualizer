@@ -29,6 +29,8 @@
         private void InitializeComponent()
         {
             panelVisualizer = new Panel();
+            pnlMiniGraph = new Panel();
+            pnlUpcomingReq = new Panel();
             panel2 = new Panel();
             panelControlsHost = new Panel();
             label1 = new Label();
@@ -37,6 +39,7 @@
             modeControlToolStripMenuItem = new ToolStripMenuItem();
             statsAndInfoToolStripMenuItem = new ToolStripMenuItem();
             helpToolStripMenuItem = new ToolStripMenuItem();
+            panelVisualizer.SuspendLayout();
             panel2.SuspendLayout();
             menuStrip1.SuspendLayout();
             SuspendLayout();
@@ -44,10 +47,26 @@
             // panelVisualizer
             // 
             panelVisualizer.BorderStyle = BorderStyle.FixedSingle;
+            panelVisualizer.Controls.Add(pnlMiniGraph);
+            panelVisualizer.Controls.Add(pnlUpcomingReq);
             panelVisualizer.Location = new Point(386, 27);
             panelVisualizer.Name = "panelVisualizer";
             panelVisualizer.Size = new Size(1118, 786);
             panelVisualizer.TabIndex = 0;
+            // 
+            // pnlMiniGraph
+            // 
+            pnlMiniGraph.Location = new Point(3, 3);
+            pnlMiniGraph.Name = "pnlMiniGraph";
+            pnlMiniGraph.Size = new Size(268, 176);
+            pnlMiniGraph.TabIndex = 1;
+            // 
+            // pnlUpcomingReq
+            // 
+            pnlUpcomingReq.Location = new Point(3, 605);
+            pnlUpcomingReq.Name = "pnlUpcomingReq";
+            pnlUpcomingReq.Size = new Size(268, 176);
+            pnlUpcomingReq.TabIndex = 0;
             // 
             // panel2
             // 
@@ -122,6 +141,8 @@
             MainMenuStrip = menuStrip1;
             Name = "Form1";
             Text = "Form1";
+            Load += Form1_Load;
+            panelVisualizer.ResumeLayout(false);
             panel2.ResumeLayout(false);
             panel2.PerformLayout();
             menuStrip1.ResumeLayout(false);
@@ -141,5 +162,7 @@
         private ToolStripMenuItem modeControlToolStripMenuItem;
         private ToolStripMenuItem statsAndInfoToolStripMenuItem;
         private ToolStripMenuItem helpToolStripMenuItem;
+        private Panel pnlMiniGraph;
+        private Panel pnlUpcomingReq;
     }
 }

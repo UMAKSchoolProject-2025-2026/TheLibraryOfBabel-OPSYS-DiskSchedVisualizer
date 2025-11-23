@@ -21,7 +21,7 @@ namespace LibraryOFBabel.Simulation
 
     public sealed class SimulationState
     {
-        public int DiskSize { get; init; }
+        public int DiskSize { get; internal set; }
         public int HeadPosition { get; internal set; }
         public int Direction { get; internal set; } // +1 = increasing, -1 = decreasing
         public IReadOnlyList<int> PendingRequests => pendingRequests.AsReadOnly();
@@ -91,9 +91,11 @@ namespace LibraryOFBabel.Simulation
             stats.TotalSeekDistance += distance;
             stats.RequestsServed += 1;
 
+            // update direction based on move (capture previous head for correct direction)
+            int prev = state.HeadPosition;
             state.HeadPosition = target;
-            // update direction based on move
-            if (distance > 0) state.Direction = (target > state.HeadPosition) ? +1 : -1;
+            if (distance > 0) state.Direction = (target > prev) ? +1 : -1;
+
             // remove one instance of the served request (FCFS serves first, others chosen by value)
             var removed = state.pendingRequests.Remove(target);
             // For FCFS we should remove the earliest inserted matching the target value:
@@ -118,43 +120,84 @@ namespace LibraryOFBabel.Simulation
 
         private int ChooseScanNext(bool wrap)
         {
-            // prefer requests in current direction
-            if (state.Direction >= 0)
-            {
-                var ahead = state.pendingRequests.Where(r => r >= state.HeadPosition).OrderBy(r => r).FirstOrDefault();
-                if (ahead != 0 || state.pendingRequests.Contains(0) && !state.pendingRequests.Contains(ahead)) // handle default 0 returned by FirstOrDefault
-                {
-                    if (state.pendingRequests.Contains(ahead)) return ahead;
-                }
+            // robust SCAN/CSCAN selection:
+            // - prefer requests in current direction
+            // - if none, for circular (wrap=true) jump to far side and continue
+            // - if non-circular, reverse direction and pick farthest in new direction
+            var pending = state.pendingRequests;
+            if (!pending.Any()) throw new InvalidOperationException("No pending requests");
 
-                // if none ahead and wrap is true, choose smallest (circular)
+            int head = state.HeadPosition;
+            int dir = state.Direction >= 0 ? 1 : -1;
+
+            if (dir >= 0)
+            {
+                // requests at or ahead of head ascending
+                var ahead = pending.Where(r => r >= head).OrderBy(r => r).ToList();
+                if (ahead.Any()) return ahead.First();
+
                 if (wrap)
                 {
-                    return state.pendingRequests.OrderBy(r => r).First();
+                    // circular: go to the smallest (wrap-around)
+                    return pending.OrderBy(r => r).First();
                 }
 
-                // reverse direction and pick farthest in new direction
-                state.Direction = -1;
-                var behind = state.pendingRequests.Where(r => r <= state.HeadPosition).OrderByDescending(r => r).First();
-                return behind;
+                // non-circular: reverse direction and take the farthest behind (largest < head)
+                var behind = pending.Where(r => r < head).OrderByDescending(r => r).ToList();
+                if (behind.Any())
+                {
+                    state.Direction = -1;
+                    return behind.First();
+                }
+
+                // fallback: choose the smallest available
+                return pending.OrderBy(r => r).First();
             }
             else
             {
-                var behind = state.pendingRequests.Where(r => r <= state.HeadPosition).OrderByDescending(r => r).FirstOrDefault();
-                if (behind != 0 || state.pendingRequests.Contains(0) && !state.pendingRequests.Contains(behind))
-                {
-                    if (state.pendingRequests.Contains(behind)) return behind;
-                }
+                // dir < 0: service <= head descending
+                var behind = pending.Where(r => r <= head).OrderByDescending(r => r).ToList();
+                if (behind.Any()) return behind.First();
 
                 if (wrap)
                 {
-                    return state.pendingRequests.OrderByDescending(r => r).First();
+                    // circular: jump to the largest (wrap-around)
+                    return pending.OrderByDescending(r => r).First();
                 }
 
-                state.Direction = +1;
-                var ahead = state.pendingRequests.Where(r => r >= state.HeadPosition).OrderBy(r => r).First();
-                return ahead;
+                // non-circular: reverse direction and choose smallest ahead
+                var ahead2 = pending.Where(r => r > head).OrderBy(r => r).ToList();
+                if (ahead2.Any())
+                {
+                    state.Direction = +1;
+                    return ahead2.First();
+                }
+
+                // fallback: pick largest
+                return pending.OrderByDescending(r => r).First();
             }
+        }
+
+        /// <summary>
+        /// Change the disk size used by the simulation. Pending requests outside the new range are removed
+        /// and head position is clamped to the new size. Raises StateChanged.
+        /// </summary>
+        public void ChangeDiskSize(int newSize)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(SimulationEngine));
+            if (newSize <= 0) throw new ArgumentOutOfRangeException(nameof(newSize));
+
+            // remove requests out of range
+            state.pendingRequests = state.pendingRequests.Where(r => r >= 0 && r < newSize).ToList();
+
+            // clamp head position
+            state.HeadPosition = Math.Clamp(state.HeadPosition, 0, newSize - 1);
+
+            // update disk size
+            state.DiskSize = newSize;
+
+            // notify listeners
+            RaiseStateChanged();
         }
 
         public void Reset(int? headPosition = null)
